@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>早会进度填报 - ProgressGuard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; background: #f9f9f9; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { text-align: center; color: #333; }
+    .date-info { text-align: center; margin: 10px 0; font-weight: bold; }
+    .form-group { margin: 15px 0; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    input, select, textarea { width: 10; padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; }
+    button { background: #1890ff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 10px; }
+    button:hover { background: #40a9ff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { padding: 10px; text-align: left; border: 1px solid #ddd; }
+    th { background: #f0f0f0; }
+    .highlight-red { background-color: #ffe6e6 !important; }
+    .highlight-yellow { background-color: #fff7e6 !important; }
+    .hidden { display: none; }
+    .login-section, .main-section { transition: opacity 0.3s; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 登录区 -->
+    <div id="loginSection" class="login-section">
+      <h1>早会填报系统</h1>
+      <div class="form-group">
+        <label for="empName">请输入你的姓名：</label>
+        <input type="text" id="empName" placeholder="如：张三" />
+      </div>
+      <button onclick="login()">进入填报</button>
+    </div>
+
+    <!-- 主内容区 -->
+    <div id="mainSection" class="main-section hidden">
+      <h1 id="pageTitle">早会填报</h1>
+      <div class="date-info" id="dateInfo"></div>
+      <div id="weekdayContent"></div>
+      <div id="weekendContent" class="hidden"></div>
+    </div>
+  </div>
+
+  <script>
+    // 🔑 替换为你自己的 Supabase 信息（下一步教你填）
+    const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentEmployee = '';
+    const DIMENSIONS = ['客户跟进', '代码开发', '文档撰写', '测试验证', '会议协调']; // 可按需修改
+
+    // 获取今天是周几（0=周日, 1=周一...6=周六）
+    function getDayOfWeek(date) {
+      return date.getDay();
+    }
+
+    // 格式化日期为 YYYY-MM-DD
+    function formatDate(date) {
+      return date.toISOString().split('T')[0];
+    }
+
+    // 检测是否为工作日
+    function isWeekday() {
+      const today = new Date();
+      const day = getDayOfWeek(today);
+      return day >= 1 && day <= 5; // 周一到周五
+    }
+
+    // 登录
+    function login() {
+      const name = document.getElementById('empName').value.trim();
+      if (!name) {
+        alert('请输入姓名');
+        return;
+      }
+      currentEmployee = name;
+      document.getElementById('loginSection').classList.add('hidden');
+      document.getElementById('mainSection').classList.remove('hidden');
+      renderPage();
+    }
+
+    // 渲染页面
+    async function renderPage() {
+      const today = new Date();
+      const dateStr = formatDate(today);
+      const dayOfWeek = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'][getDayOfWeek(today)];
+
+      document.getElementById('dateInfo').innerText = `${dateStr} ${dayOfWeek}`;
+
+      if (isWeekday()) {
+        document.getElementById('pageTitle').innerText = '今日工作填报';
+        document.getElementById('weekendContent').classList.add('hidden');
+        document.getElementById('weekdayContent').classList.remove('hidden');
+        await renderWeekdayForm(dateStr);
+      } else {
+        document.getElementById('pageTitle').innerText = '本周汇总';
+        document.getElementById('weekdayContent').classList.add('hidden');
+        document.getElementById('weekendContent').classList.remove('hidden');
+        await renderWeekSummary();
+      }
+    }
+
+    // 渲染工作日填报表单
+    async function renderWeekdayForm(dateStr) {
+      let html = `<div class="form-group">
+                    <label>工作维度</label>
+                    <label>当前状态</label>
+                    <label>进展说明（限100字）</label>
+                  </div>`;
+
+      for (const dim of DIMENSIONS) {
+        // 获取已有数据
+        let existing = { progress_status: '进行中', notes: '' };
+        const { data } = await supabase
+          .from('daily_progress')
+          .select('progress_status, notes')
+          .eq('employee_name', currentEmployee)
+          .eq('date', dateStr)
+          .eq('task_dimension', dim)
+          .single();
+
+        if (data) existing = data;
+
+        html += `
+          <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <div style="width: 120px; padding-top: 8px;">${dim}</div>
+            <select id="status-${dim.replace(/\s/g, '_')}">
+              <option value="未开始" ${existing.progress_status === '未开始' ? 'selected' : ''}>未开始</option>
+              <option value="进行中" ${existing.progress_status === '进行中' ? 'selected' : ''}>进行中</option>
+              <option value="有新进展" ${existing.progress_status === '有新进展' ? 'selected' : ''}>有新进展</option>
+              <option value="已阻塞" ${existing.progress_status === '已阻塞' ? 'selected' : ''}>已阻塞</option>
+              <option value="已完成" ${existing.progress_status === '已完成' ? 'selected' : ''}>已完成</option>
+            </select>
+            <textarea id="notes-${dim.replace(/\s/g, '_')}" maxlength="100" placeholder="简要说明（如：联系了客户A，需求确认中）">${existing.notes}</textarea>
+          </div>
+        `;
+      }
+
+      html += `<button onclick="saveTodayData('${dateStr}')">提交今日进度</button>`;
+      html += `<p style="font-size:12px; color:#666;">提交后不可修改，请认真填写。</p>`;
+      document.getElementById('weekdayContent').innerHTML = html;
+    }
+
+    // 保存数据
+    async function saveTodayData(dateStr) {
+      for (const dim of DIMENSIONS) {
+        const status = document.getElementById(`status-${dim.replace(/\s/g, '_')}`).value;
+        const notes = document.getElementById(`notes-${dim.replace(/\s/g, '_')}`).value.trim();
+
+        // 限制字数
+        if (notes.length > 100) {
+          alert('说明不能超过100字');
+          return;
+        }
+
+        // Upsert（存在则更新，否则插入）
+        await supabase
+          .from('daily_progress')
+          .upsert(
+            {
+              employee_name: currentEmployee,
+              date: dateStr,
+              task_dimension: dim,
+              progress_status: status,
+              notes: notes
+            },
+            { onConflict: 'employee_name,date,task_dimension' }
+          );
+      }
+      alert('✅ 提交成功！明天见~');
+    }
+
+    // 渲染周末汇总
+    async function renderWeekSummary() {
+      // 获取本周一到周五
+      const today = new Date();
+      const day = today.getDay(); // 0=周日, 6=周六
+      let monday = new Date(today);
+      if (day === 0) monday.setDate(today.getDate() - 6); // 周日 → 往前6天
+      else monday.setDate(today.getDate() - (day - 1)); // 周六 → 往前5天
+
+      const dates = [];
+      for (let i = 0; i < 5; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        dates.push(formatDate(d));
+      }
+
+      // 获取所有员工本周数据
+      const { data: allData } = await supabase
+        .from('daily_progress')
+        .select('*')
+        .in('date', dates)
+        .order('employee_name', { ascending: true })
+        .order('date', { ascending: true });
+
+      // 按员工分组
+      const employeeData = {};
+      for (const row of allData) {
+        if (!employeeData[row.employee_name]) employeeData[row.employee_name] = {};
+        if (!employeeData[row.employee_name][row.task_dimension]) {
+          employeeData[row.employee_name][row.task_dimension] = {};
+        }
+        employeeData[row.employee_name][row.task_dimension][row.date] = row;
+      }
+
+      // 构建表格
+      let html = `<table>
+        <thead>
+          <tr>
+            <th>员工</th>
+            <th>工作维度</th>
+            ${dates.map(d => `<th>${d}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>`;
+
+      for (const emp of Object.keys(employeeData).sort()) {
+        for (const dim of DIMENSIONS) {
+          const cells = dates.map(date => {
+            const record = employeeData[emp][dim]?.[date];
+            if (!record) return '<td>—</td>';
+
+            // 检测连续重复（简单版：和前一天比）
+            let isRepeated = false;
+            let repeatCount = 1;
+            for (let i = 1; i < dates.length; i++) {
+              const prevDate = dates[i - 1];
+              const currDate = dates[i];
+              const prev = employeeData[emp][dim]?.[prevDate];
+              const curr = employeeData[emp][dim]?.[currDate];
+              if (prev && curr && prev.progress_status === curr.progress_status && prev.notes === curr.notes) {
+                // 这里简化：只要和前一天相同，就计数
+                // 实际可做滑动窗口，但为简单，我们标连续3天相同
+              }
+            }
+
+            // 🔴 更准确的重复检测（连续3天相同）
+            let highlightClass = '';
+            let sameCount = 1;
+            let maxSame = 1;
+            for (let i = 1; i < dates.length; i++) {
+              const a = employeeData[emp][dim]?.[dates[i-1]];
+              const b = employeeData[emp][dim]?.[dates[i]];
+              if (a && b && a.progress_status === b.progress_status && a.notes === b.notes) {
+                sameCount++;
+                maxSame = Math.max(maxSame, sameCount);
+              } else {
+                sameCount = 1;
+              }
+            }
+            if (maxSame >= 3) highlightClass = 'highlight-red';
+            else if (maxSame >= 2) highlightClass = 'highlight-yellow';
+
+            return `<td class="${highlightClass}">${record.progress_status}<br><small>${record.notes || '—'}</small></td>`;
+          });
+          html += `<tr><td>${emp}</td><td>${dim}</td>${cells.join('')}</tr>`;
+        }
+      }
+
+      html += `</tbody></table>`;
+      html += `<p style="font-size:12px; margin-top:10px;">
+        <span style="background:#ffe6e6; padding:2px 5px;">🔴 红色</span>：连续3天无进展  
+        <span style="background:#fff7e6; padding:2px 5px;">🟡 黄色</span>：连续2天无进展
+      </p>`;
+
+      document.getElementById('weekendContent').innerHTML = html;
+    }
+
+    // 页面加载
+    window.onload = function() {
+      // 检查是否已登录（简单本地存储）
+      const saved = localStorage.getItem('pg_employee');
+      if (saved) {
+        currentEmployee = saved;
+        document.getElementById('loginSection').classList.add('hidden');
+        document.getElementById('mainSection').classList.remove('hidden');
+        renderPage();
+      }
+    };
+  </script>
+</body>
+</html>
